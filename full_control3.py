@@ -15,7 +15,7 @@ S_HEALTHY_LO = "Healthy Lower Arm"
 S_EXO_UP     = "Exo Upper Arm"
 S_EXO_LO     = "Exo Lower Arm"
 S_JOINT_M2 = "Joint Motor 2 IMU"
-SENSORS = [S_HEALTHY_UP, S_HEALTHY_LO, S_EXO_UP, S_EXO_LO]
+SENSORS = [S_HEALTHY_UP, S_HEALTHY_LO, S_EXO_UP, S_EXO_LO, S_JOINT_M2]
 ALIASES = {s.lower(): s for s in SENSORS}
 
 
@@ -68,79 +68,6 @@ def twist_deg_from_baseline(q0, q_now, k=(1.0, 0.0, 0.0)):
         return None
     q_rel = q_mul(q_conj(q0), q_now)
     return twist_deg_about_axis(q_rel, k)
-
-class MetaWearBLEReader(threading.Thread):
-    def __init__(self, mac: str, name="MetaWear"):
-        super().__init__(daemon=True)
-        self.mac = mac
-        self.name = name
-        self.q = None
-        self.err = None
-        self.stop_flag = False
-        self.device = None
-
-    def run(self):
-        try:
-            from mbientlab.metawear import MetaWear, libmetawear, parse_value
-            from mbientlab.metawear.cbindings import SensorFusionMode, SensorFusionData, SensorFusionAccRange, SensorFusionGyroRange, FnVoid_VoidP_DataP
-        except ImportError:
-            self.err = "MetaWear library not installed. Try: pip3 install metawear"
-            return
-
-        def callback(ctx, data):
-            val = parse_value(data)
-            # val has w, x, y, z
-            self.q = qnorm(val.w, val.x, val.y, val.z)
-
-        try:
-            self.device = MetaWear(self.mac)
-            self.device.connect()
-            print(f"[metawear] Connected to {self.name}: {self.mac}")
-
-            self.callback = FnVoid_VoidP_DataP(callback)
-
-            libmetawear.mbl_mw_sensor_fusion_set_mode(
-                self.device.board,
-                SensorFusionMode.IMU_PLUS
-            )
-            libmetawear.mbl_mw_sensor_fusion_set_acc_range(
-                self.device.board,
-                SensorFusionAccRange._8G
-            )
-            libmetawear.mbl_mw_sensor_fusion_set_gyro_range(
-                self.device.board,
-                SensorFusionGyroRange._2000DPS
-            )
-            libmetawear.mbl_mw_sensor_fusion_write_config(self.device.board)
-
-            signal = libmetawear.mbl_mw_sensor_fusion_get_data_signal(
-                self.device.board,
-                SensorFusionData.QUATERNION
-            )
-            libmetawear.mbl_mw_datasignal_subscribe(signal, None, self.callback)
-
-            libmetawear.mbl_mw_sensor_fusion_enable_data(
-                self.device.board,
-                SensorFusionData.QUATERNION
-            )
-            libmetawear.mbl_mw_sensor_fusion_start(self.device.board)
-
-            while not self.stop_flag:
-                time.sleep(0.05)
-
-        except Exception as e:
-            self.err = f"MetaWear BLE failed: {e}"
-
-        finally:
-            try:
-                if self.device:
-                    libmetawear.mbl_mw_sensor_fusion_stop(self.device.board)
-                    libmetawear.mbl_mw_debug_disconnect(self.device.board)
-            except:
-                pass
-
-    def stop(self):
-        self.stop_flag = True
 
 
 # ---------- PID ----------
@@ -518,7 +445,6 @@ def main():
     ap.add_argument("--pi", default="10.100.161.178", help="Pi host/IP for CAN bridge")
     ap.add_argument("--pi-port", type=int, default=8008, help="Pi TCP port")
     ap.add_argument("--plot", type=int, choices=[0, 1], default=1, help="Enable live plotting (1=on, 0=off)")
-    ap.add_argument("--joint2-mac", default=None, help="MAC address of new MetaWear IMU mounted between shoulder joints 1 and 2")
     ap.add_argument("--joint2-axis", choices=["x", "y", "z"], default="x", help="Axis used from new joint IMU for Motor 2 actual position")
 
     # Motor 1 (Elbow)
@@ -603,20 +529,6 @@ def main():
 
     print(f"[uart] Streaming from {args.serial}@{args.baud}")
 
-    joint2_reader = None
-    if args.joint2_mac:
-        joint2_reader = MetaWearBLEReader(args.joint2_mac, name="Joint Motor 2 IMU")
-        joint2_reader.start()
-    
-        t_ble = time.time()
-        while joint2_reader.err is None and joint2_reader.q is None and time.time() - t_ble < 6.0:
-            time.sleep(0.05)
-    
-        if joint2_reader.err:
-            print(joint2_reader.err, file=sys.stderr)
-            return
-
-        print("[metawear] Joint Motor 2 IMU streaming")
 
     # Calibration
     vH = [0.0, 0.0, 0.0]; nH = 0
@@ -633,7 +545,7 @@ def main():
 
     qHu0 = reader.q[S_HEALTHY_UP]
     qEu0 = reader.q[S_EXO_UP]
-    qJ20 = joint2_reader.q if joint2_reader else None
+    qJ20 = reader.q[S_JOINT_M2]
     kJ2 = axis_tuple(args.joint2_axis)
 
     while time.time() < t_end:
@@ -677,8 +589,11 @@ def main():
 
     qHu0 = qHu0 or reader.q[S_HEALTHY_UP]
     qEu0 = qEu0 or reader.q[S_EXO_UP]
+    qJ20 = qJ20 or reader.q[S_JOINT_M2]
 
-    print(f"[zero] Healthy Elbow {EH0:+.2f}°, Exo Elbow {EE0:+.2f}° (upper-arm shoulder baselines captured)")
+    print(f"[zero] Healthy Elbow {EH0:+.2f}°, Exo Elbow {EE0:+.2f}° (upper-arm + joint Motor 2 baselines captured)")
+    if qJ20 is None:
+        print("[warn] Joint Motor 2 IMU was not seen during calibration. Motor 2 control will wait until it streams.")
 
     pi = PiClient(args.pi, args.pi_port)
 
@@ -974,11 +889,6 @@ def main():
         except:
             pass
 
-        try:
-            if joint2_reader is not None:
-                joint2_reader.stop()
-        except:
-            pass
 
 
 if __name__ == "__main__":
