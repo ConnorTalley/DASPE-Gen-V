@@ -707,15 +707,11 @@ def main():
 
             # ---------- Shoulder X (Motor 2) ----------
             qHu = reader.q[S_HEALTHY_UP]
-            
+            qJ2 = reader.q[S_JOINT_M2]
             healthy_abs = twist_deg_from_baseline(qHu0, qHu, kS)
             
             # New actual feedback source for Motor 2
-            if joint2_reader and joint2_reader.q:
-                exo_abs = twist_deg_from_baseline(qJ20, joint2_reader.q, kJ2)
-            else:
-                qEu = reader.q[S_EXO_UP]
-                exo_abs = twist_deg_from_baseline(qEu0, qEu, kS)
+            exo_abs = twist_deg_from_baseline(qJ20, qJ2, kJ2)
             
             if healthy_abs is None or exo_abs is None:
                 time.sleep(0.005)
