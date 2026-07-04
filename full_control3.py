@@ -736,6 +736,7 @@ def main():
 
             # ---------- Shoulder Z / parallel with elbow axis (Motor 3) ----------
             # Uses upper IMUs only; no lower IMUs involved
+            qEu = reader.q[S_EXO_UP]
             healthy_abs_3 = -twist_deg_from_baseline(qHu0, qHu, kS2)
             exo_abs_3 = -twist_deg_from_baseline(qEu0, qEu, kS2)
 
