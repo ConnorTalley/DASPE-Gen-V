@@ -249,6 +249,14 @@ class PiClient:
             "payload": {"motor_id": int(motor_id), "position_deg": float(deg)}
         }
         return self._send_no_wait(obj)
+        
+    def servo_current(self, motor_id: int, A: float) -> str:
+        obj = {
+            "mode": "proto",
+            "proto": "servo_current",
+            "payload": {"motor_id": int(motor_id), "current_a": float(A)}
+        }
+        return self._send_no_wait(obj)
 
 
 # ---------- Angle computations ----------
