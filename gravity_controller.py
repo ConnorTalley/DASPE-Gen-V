@@ -1,97 +1,127 @@
-import socket
+#!/usr/bin/env python3
+
+import argparse
 import json
 import math
+import socket
 import time
-import can
+
+
+# ============================================================
+# PI CLIENT
+# ============================================================
+
+class PiClient:
+
+    def __init__(self, host: str, port: int, timeout=2.0):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.sock = None
+
+    def connect(self):
+        self.close()
+
+        self.sock = socket.create_connection(
+            (self.host, self.port),
+            timeout=self.timeout
+        )
+
+        self.sock.settimeout(self.timeout)
+
+    def close(self):
+
+        if self.sock:
+
+            try:
+                self.sock.close()
+            except:
+                pass
+
+        self.sock = None
+
+    def _send_no_wait(self, obj: dict) -> str:
+
+        line = (json.dumps(obj) + "\n").encode()
+
+        for _ in range(2):
+
+            try:
+
+                if not self.sock:
+                    self.connect()
+
+                self.sock.sendall(line)
+
+                return "TX_ONLY"
+
+            except Exception:
+
+                self.close()
+
+        return "ERR:no-connection"
+
+    def servo_current(
+        self,
+        motor_id: int,
+        current_a: float
+    ) -> str:
+
+        obj = {
+            "mode": "proto",
+            "proto": "servo_current",
+            "payload": {
+                "motor_id": int(motor_id),
+                "current_a": float(current_a)
+            }
+        }
+
+        return self._send_no_wait(obj)
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-# ------------------------------------------------------------
-# Network
-# ------------------------------------------------------------
+PI_IP = "10.100.161.178"
+PI_PORT = 8008
 
-UDP_IP = "0.0.0.0"
+# Motor ID
+MOTOR_ID = 3
+
+# Maximum commanded current
+MAX_CURRENT = 4.0
+
+# Sensor receiver
 UDP_PORT = 5005
 
-
-# ------------------------------------------------------------
-# CAN
-# ------------------------------------------------------------
-
-CAN_INTERFACE = "can0"
-
-# CubeMars motor CAN ID
-MOTOR_ID = 1
-
-
-# ------------------------------------------------------------
-# CURRENT LIMIT
-# ------------------------------------------------------------
-
-# IMPORTANT:
-# Start VERY low for initial testing.
-#
-# Example:
-#   0.5 A maximum
-#
-# Increase only after confirming direction and behavior.
-
-MAX_CURRENT = 0.5
-
-
-# ------------------------------------------------------------
-# ELEVATION / CURRENT PROFILE
-# ------------------------------------------------------------
-
-# Format:
-#
-#     (elevation in degrees, current in amps)
-#
-# The controller linearly interpolates between these points.
-
-CURRENT_PROFILE = [
-    (0.0,   0.0),
-    (90.0,  MAX_CURRENT),
-    (180.0, 0.5 * MAX_CURRENT),
-]
-
-
-# ------------------------------------------------------------
-# CONTROL RATE
-# ------------------------------------------------------------
-
-CONTROL_RATE = 100.0
+# Controller update rate
+CONTROL_RATE = 50.0
 CONTROL_PERIOD = 1.0 / CONTROL_RATE
 
-
-# ============================================================
-# CAN SETUP
-# ============================================================
-
-can_bus = can.interface.Bus(
-    channel=CAN_INTERFACE,
-    interface="socketcan"
-)
+# How long we will accept old sensor data
+SENSOR_TIMEOUT = 0.25
 
 
 # ============================================================
-# UDP SETUP
+# CURRENT PROFILE
 # ============================================================
 
-udp_socket = socket.socket(
-    socket.AF_INET,
-    socket.SOCK_DGRAM
-)
+# These are intentionally explicit.
+#
+# You can add additional points later.
+#
+#       Elevation       Current
+#
+#       0 degrees       0 A
+#       90 degrees      4 A
+#       180 degrees     2 A
 
-udp_socket.bind(
-    (UDP_IP, UDP_PORT)
-)
-
-# Don't block forever waiting for sensor data.
-udp_socket.settimeout(1.0)
+CURRENT_PROFILE = [
+    (0.0, 0.0),
+    (90.0, MAX_CURRENT),
+    (180.0, 0.5 * MAX_CURRENT),
+]
 
 
 # ============================================================
@@ -122,30 +152,38 @@ def quaternion_to_elevation(q):
 
     x_world, y_world, z_world = quaternion_to_x_axis(q)
 
-    # Prevent floating-point errors from creating
-    # values slightly outside [-1, 1].
-    z_world = max(-1.0, min(1.0, z_world))
+    # Prevent numerical errors from producing
+    # a value slightly outside [-1, 1].
+
+    z_world = max(
+        -1.0,
+        min(1.0, z_world)
+    )
 
     elevation_from_horizontal = math.degrees(
         math.asin(z_world)
     )
 
-    # Our desired definition:
+    # Definition:
     #
     # 0°   = arm straight down
     # 90°  = arm horizontal
     # 180° = arm straight up
 
-    elevation = elevation_from_horizontal + 90.0
+    elevation = (
+        elevation_from_horizontal + 90.0
+    )
 
-    # Keep within our expected range
-    elevation = max(0.0, min(180.0, elevation))
+    elevation = max(
+        0.0,
+        min(180.0, elevation)
+    )
 
     return elevation
 
 
 # ============================================================
-# CURRENT PROFILE
+# CURRENT PROFILE INTERPOLATION
 # ============================================================
 
 def get_current_from_elevation(elevation):
@@ -158,76 +196,33 @@ def get_current_from_elevation(elevation):
     if elevation >= CURRENT_PROFILE[-1][0]:
         return CURRENT_PROFILE[-1][1]
 
-    # Find the two points surrounding the current elevation
-    for i in range(len(CURRENT_PROFILE) - 1):
+    # Find the surrounding points
+    for index in range(
+        len(CURRENT_PROFILE) - 1
+    ):
 
-        angle_1, current_1 = CURRENT_PROFILE[i]
-        angle_2, current_2 = CURRENT_PROFILE[i + 1]
+        angle_1, current_1 = CURRENT_PROFILE[index]
+
+        angle_2, current_2 = CURRENT_PROFILE[index + 1]
 
         if angle_1 <= elevation <= angle_2:
 
-            # Linear interpolation
             fraction = (
                 (elevation - angle_1)
-                / (angle_2 - angle_1)
+                /
+                (angle_2 - angle_1)
             )
 
             current = (
                 current_1
-                + fraction * (current_2 - current_1)
+                +
+                fraction *
+                (current_2 - current_1)
             )
 
             return current
 
     return 0.0
-
-
-# ============================================================
-# CUBEMARS CURRENT COMMAND
-# ============================================================
-
-def send_current(current):
-
-    # CubeMars current command uses 0.001 A units.
-    current_command = int(current * 1000.0)
-
-    # Convert signed 32-bit integer to 4 bytes.
-    current_bytes = current_command.to_bytes(
-        4,
-        byteorder="big",
-        signed=True
-    )
-
-    # Current-loop control mode = 1
-    #
-    # Extended CAN ID:
-    #
-    # [control mode][motor ID]
-    #
-    # For motor ID 1:
-    # 0x101
-
-    can_id = (1 << 8) | MOTOR_ID
-
-    message = can.Message(
-        arbitration_id=can_id,
-        is_extended_id=True,
-        data=current_bytes
-    )
-
-    can_bus.send(message)
-
-
-# ============================================================
-# ZERO CURRENT
-# ============================================================
-
-def send_zero_current():
-
-    try:
-        send_current(0.0)
-    except Exception:
-        pass
 
 
 # ============================================================
@@ -238,226 +233,395 @@ def display_data(
     elevation,
     commanded_current,
     quaternion,
-    pressure
+    pressure,
+    motor_response
 ):
 
     print("\033[2J\033[H", end="")
 
-    print("================================================")
-    print("        EXOSKELETON GRAVITY CONTROLLER")
-    print("================================================")
+    print("=" * 60)
+    print("             GRAVITY COMPENSATION")
+    print("=" * 60)
 
     print()
-
-    # --------------------------------------------------------
-    # IMU
-    # --------------------------------------------------------
 
     print("ARM ORIENTATION")
-    print("------------------------------------------------")
+    print("-" * 60)
 
     print(
-        f"Elevation:          {elevation:8.2f} deg"
+        f"Elevation:          {elevation:8.2f}°"
     )
 
     print(
-        f"Commanded Current:   {commanded_current:8.3f} A"
+        f"Commanded current:  {commanded_current:+8.3f} A"
     )
 
     print()
 
-    print("Quaternion")
+    print("QUATERNION")
+    print("-" * 60)
+
     print(
-        f"  i: {quaternion['i']: .5f}"
+        f"i = {quaternion['i']:+.5f}"
     )
 
     print(
-        f"  j: {quaternion['j']: .5f}"
+        f"j = {quaternion['j']:+.5f}"
     )
 
     print(
-        f"  k: {quaternion['k']: .5f}"
+        f"k = {quaternion['k']:+.5f}"
     )
 
     print(
-        f"  r: {quaternion['r']: .5f}"
+        f"r = {quaternion['r']:+.5f}"
     )
-
-    # --------------------------------------------------------
-    # PRESSURE
-    # --------------------------------------------------------
 
     print()
+
     print("PRESSURE")
-    print("------------------------------------------------")
+    print("-" * 60)
 
     for channel, values in pressure.items():
 
         print(
             f"{channel.upper()}: "
-            f"{values['voltage']:.3f} V  "
+            f"{values['voltage']:.3f} V   "
             f"{values['percentage']:6.2f}%"
         )
 
     print()
-    print("Current profile:")
-    print("  0°   → {:.3f} A".format(
-        CURRENT_PROFILE[0][1]
-    ))
 
-    print("  90°  → {:.3f} A".format(
-        MAX_CURRENT
-    ))
+    print("CURRENT PROFILE")
+    print("-" * 60)
 
-    print("  180° → {:.3f} A".format(
-        CURRENT_PROFILE[-1][1]
-    ))
+    for angle, current in CURRENT_PROFILE:
 
-    print("================================================")
-
-
-# ============================================================
-# MAIN CONTROL LOOP
-# ============================================================
-
-print()
-print("================================================")
-print("      GRAVITY CONTROLLER STARTING")
-print("================================================")
-print()
-print(f"CAN interface: {CAN_INTERFACE}")
-print(f"Motor ID:      {MOTOR_ID}")
-print(f"Maximum:       {MAX_CURRENT:.3f} A")
-print()
-print("Current profile:")
-
-for angle, current in CURRENT_PROFILE:
-    print(
-        f"  {angle:6.1f}° → {current:.3f} A"
-    )
-
-print()
-print("Waiting for Raspberry Pi...")
-print()
-
-
-last_packet_time = time.monotonic()
-
-
-try:
-
-    while True:
-
-        loop_start = time.monotonic()
-
-        # ----------------------------------------------------
-        # RECEIVE SENSOR DATA
-        # ----------------------------------------------------
-
-        try:
-
-            data, address = udp_socket.recvfrom(4096)
-
-            packet = json.loads(
-                data.decode("utf-8")
-            )
-
-            last_packet_time = time.monotonic()
-
-        except socket.timeout:
-
-            # No sensor data.
-            # IMPORTANT: remove motor current.
-            send_zero_current()
-
-            print(
-                "\nWARNING: No sensor data received."
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # EXTRACT DATA
-        # ----------------------------------------------------
-
-        quaternion = packet["quaternion"]
-
-        pressure = packet["pressure"]
-
-
-        # ----------------------------------------------------
-        # CALCULATE ELEVATION
-        # ----------------------------------------------------
-
-        elevation = quaternion_to_elevation(
-            quaternion
+        print(
+            f"{angle:6.1f}° → {current:+.3f} A"
         )
-
-
-        # ----------------------------------------------------
-        # CALCULATE DESIRED CURRENT
-        # ----------------------------------------------------
-
-        commanded_current = (
-            get_current_from_elevation(
-                elevation
-            )
-        )
-
-
-        # ----------------------------------------------------
-        # SEND MOTOR CURRENT
-        # ----------------------------------------------------
-
-        send_current(
-            commanded_current
-        )
-
-
-        # ----------------------------------------------------
-        # DISPLAY
-        # ----------------------------------------------------
-
-        display_data(
-            elevation,
-            commanded_current,
-            quaternion,
-            pressure
-        )
-
-
-        # ----------------------------------------------------
-        # CONTROL RATE
-        # ----------------------------------------------------
-
-        elapsed = (
-            time.monotonic()
-            - loop_start
-        )
-
-        sleep_time = (
-            CONTROL_PERIOD
-            - elapsed
-        )
-
-        if sleep_time > 0:
-            time.sleep(sleep_time)
-
-
-except KeyboardInterrupt:
 
     print()
-    print("Stopping controller...")
+
+    print(
+        f"Motor response: {motor_response}"
+    )
+
+    print("=" * 60)
 
 
-finally:
+# ============================================================
+# ZERO MOTOR
+# ============================================================
 
-    # ALWAYS remove motor current
-    send_zero_current()
+def zero_motor(pi):
 
-    can_bus.shutdown()
+    try:
 
-    udp_socket.close()
+        response = pi.servo_current(
+            MOTOR_ID,
+            0.0
+        )
 
-    print("Motor current set to zero.")
+        print(
+            f"[safe-zero] Motor {MOTOR_ID}: "
+            f"{response}"
+        )
+
+    except Exception as error:
+
+        print(
+            f"[safe-zero] Error: {error}"
+        )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description=
+        "BNO08X elevation-based CubeMars gravity controller"
+    )
+
+    parser.add_argument(
+        "--pi",
+        default=PI_IP,
+        help="Raspberry Pi CAN bridge IP"
+    )
+
+    parser.add_argument(
+        "--pi-port",
+        type=int,
+        default=PI_PORT,
+        help="Raspberry Pi CAN bridge TCP port"
+    )
+
+    parser.add_argument(
+        "--motor",
+        type=int,
+        default=MOTOR_ID,
+        help="CubeMars motor ID"
+    )
+
+    parser.add_argument(
+        "--max-current",
+        type=float,
+        default=MAX_CURRENT,
+        help="Maximum current at 90 degrees"
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Calculate/display current without sending to motor"
+    )
+
+    args = parser.parse_args()
+
+
+    # --------------------------------------------------------
+    # Update global motor configuration
+    # --------------------------------------------------------
+
+    global MOTOR_ID
+    global MAX_CURRENT
+    global CURRENT_PROFILE
+
+    MOTOR_ID = args.motor
+
+    MAX_CURRENT = abs(args.max_current)
+
+    CURRENT_PROFILE = [
+        (0.0, 0.0),
+        (90.0, MAX_CURRENT),
+        (180.0, 0.5 * MAX_CURRENT),
+    ]
+
+
+    # --------------------------------------------------------
+    # UDP sensor receiver
+    # --------------------------------------------------------
+
+    udp_socket = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_DGRAM
+    )
+
+    udp_socket.bind(
+        ("0.0.0.0", UDP_PORT)
+    )
+
+    udp_socket.settimeout(1.0)
+
+
+    # --------------------------------------------------------
+    # Pi CAN bridge
+    # --------------------------------------------------------
+
+    pi = PiClient(
+        args.pi,
+        args.pi_port
+    )
+
+
+    # --------------------------------------------------------
+    # Startup
+    # --------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("       ELEVATION GRAVITY CONTROLLER")
+    print("=" * 60)
+
+    print()
+    print(f"Pi CAN bridge: {args.pi}:{args.pi_port}")
+    print(f"Motor ID:      {MOTOR_ID}")
+    print(f"Maximum:       {MAX_CURRENT:.3f} A")
+    print(f"Dry run:       {args.dry_run}")
+
+    print()
+    print("Current profile:")
+
+    for angle, current in CURRENT_PROFILE:
+
+        print(
+            f"  {angle:6.1f}° → {current:+.3f} A"
+        )
+
+    print()
+    print("Waiting for sensor data...")
+    print()
+
+
+    last_sensor_time = 0.0
+
+
+    try:
+
+        while True:
+
+            loop_start = time.monotonic()
+
+
+            # =================================================
+            # RECEIVE SENSOR DATA
+            # =================================================
+
+            try:
+
+                data, address = udp_socket.recvfrom(
+                    4096
+                )
+
+                packet = json.loads(
+                    data.decode("utf-8")
+                )
+
+                last_sensor_time = time.monotonic()
+
+
+            except socket.timeout:
+
+                print(
+                    "\n[WARNING] Sensor timeout"
+                )
+
+                if not args.dry_run:
+                    zero_motor(pi)
+
+                continue
+
+
+            # =================================================
+            # CHECK SENSOR AGE
+            # =================================================
+
+            sensor_age = (
+                time.monotonic()
+                -
+                last_sensor_time
+            )
+
+            if sensor_age > SENSOR_TIMEOUT:
+
+                if not args.dry_run:
+                    zero_motor(pi)
+
+                continue
+
+
+            # =================================================
+            # EXTRACT QUATERNION
+            # =================================================
+
+            quaternion = packet["quaternion"]
+
+            pressure = packet["pressure"]
+
+
+            # =================================================
+            # CALCULATE ELEVATION
+            # =================================================
+
+            elevation = quaternion_to_elevation(
+                quaternion
+            )
+
+
+            # =================================================
+            # CALCULATE CURRENT
+            # =================================================
+
+            commanded_current = (
+                get_current_from_elevation(
+                    elevation
+                )
+            )
+
+
+            # =================================================
+            # SEND CURRENT
+            # =================================================
+
+            if args.dry_run:
+
+                motor_response = "DRY RUN"
+
+            else:
+
+                motor_response = (
+                    pi.servo_current(
+                        MOTOR_ID,
+                        commanded_current
+                    )
+                )
+
+
+            # =================================================
+            # DISPLAY
+            # =================================================
+
+            display_data(
+                elevation,
+                commanded_current,
+                quaternion,
+                pressure,
+                motor_response
+            )
+
+
+            # =================================================
+            # CONTROL RATE
+            # =================================================
+
+            elapsed = (
+                time.monotonic()
+                -
+                loop_start
+            )
+
+            sleep_time = (
+                CONTROL_PERIOD
+                -
+                elapsed
+            )
+
+            if sleep_time > 0:
+
+                time.sleep(
+                    sleep_time
+                )
+
+
+    except KeyboardInterrupt:
+
+        print()
+        print("[ctrl] Ctrl-C detected")
+
+
+    finally:
+
+        # ----------------------------------------------------
+        # ALWAYS ZERO MOTOR
+        # ----------------------------------------------------
+
+        if not args.dry_run:
+
+            zero_motor(pi)
+
+        pi.close()
+
+        udp_socket.close()
+
+        print("[done]")
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+    main()
