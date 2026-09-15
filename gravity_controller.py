@@ -6,7 +6,6 @@ import math
 import socket
 import time
 
-
 # ============================================================
 # PI CLIENT
 # ============================================================
@@ -90,7 +89,7 @@ PI_PORT = 8008
 MOTOR_ID = 3
 
 # Maximum commanded current
-MAX_CURRENT = 4.0
+MAX_CURRENT = 0.01
 
 # Sensor receiver
 UDP_PORT = 5005
@@ -386,18 +385,13 @@ def main():
     # Update global motor configuration
     # --------------------------------------------------------
 
-    global MOTOR_ID
-    global MAX_CURRENT
-    global CURRENT_PROFILE
+    motor_id = args.motor
+    max_current = abs(args.max_current)
 
-    MOTOR_ID = args.motor
-
-    MAX_CURRENT = abs(args.max_current)
-
-    CURRENT_PROFILE = [
+    current_profile = [
         (0.0, 0.0),
-        (90.0, MAX_CURRENT),
-        (180.0, 0.5 * MAX_CURRENT),
+        (90.0, max_current),
+        (180.0, 0.5 * max_current),
     ]
 
 
@@ -536,9 +530,9 @@ def main():
             # =================================================
 
             commanded_current = (
-                get_current_from_elevation(
+                -(get_current_from_elevation(
                     elevation
-                )
+                ) + (elevation * 0.005))
             )
 
 
