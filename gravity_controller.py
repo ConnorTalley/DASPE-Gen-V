@@ -389,7 +389,7 @@ def main():
     max_current = abs(args.max_current)
 
     current_profile = [
-        (0.0,0.4),
+        (0.0,0.5),
         (90.0, max_current),
         (180.0, 0.5 * max_current),
     ]
@@ -454,6 +454,8 @@ def main():
 
 
     try:
+    
+        prev_elevation = 0
 
         while True:
 
@@ -523,6 +525,14 @@ def main():
             elevation = quaternion_to_elevation(
                 quaternion
             )
+            
+            d_elevation = (prev_elevation - elevation)
+            
+            if d_elevation >= 0.05:
+                dir = 0
+            else:
+                dir = 1
+            
 
 
             # =================================================
@@ -532,7 +542,7 @@ def main():
             commanded_current = (
                 (get_current_from_elevation(
                     elevation
-                ))
+                ) * dir)
             )
 
 
@@ -552,6 +562,8 @@ def main():
                         -commanded_current
                     )
                 )
+                
+            prev_elevation = elevation
 
 
             # =================================================
