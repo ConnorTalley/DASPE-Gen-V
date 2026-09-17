@@ -89,7 +89,7 @@ PI_PORT = 8008
 MOTOR_ID = 3
 
 # Maximum commanded current
-MAX_CURRENT = 0.01
+MAX_CURRENT = 1
 
 # Sensor receiver
 UDP_PORT = 5005
@@ -389,7 +389,7 @@ def main():
     max_current = abs(args.max_current)
 
     current_profile = [
-        (0.0, 0.0),
+        (0.0,0.4),
         (90.0, max_current),
         (180.0, 0.5 * max_current),
     ]
@@ -530,9 +530,9 @@ def main():
             # =================================================
 
             commanded_current = (
-                -(get_current_from_elevation(
+                (get_current_from_elevation(
                     elevation
-                ) + (elevation * 0.005))
+                ))
             )
 
 
@@ -549,7 +549,7 @@ def main():
                 motor_response = (
                     pi.servo_current(
                         MOTOR_ID,
-                        commanded_current
+                        -commanded_current
                     )
                 )
 

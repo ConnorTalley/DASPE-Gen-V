@@ -86,17 +86,18 @@ PI_PORT = 8008
 # Motor ID
 MOTOR_ID = 3
 
-# Maximum commanded current
-MAX_CURRENT = 0.0005
+# Maximum and minimum commanded current
+MAX_CURRENT = 1.5
+MIN_CURRENT = 0.5
 
 # Current Step
-MAX_CURRENT_STEP = 0.000001
+MAX_CURRENT_STEP = 0.0025
 
 # Sensor receiver
 UDP_PORT = 5005
 
 # How long we will accept old sensor data
-SENSOR_TIMEOUT = 0.25
+SENSOR_TIMEOUT = 0.5
 
 ELEVATIONS = []
 CURRENTS = []
@@ -378,7 +379,7 @@ def main():
             # SEND CURRENT
             # =================================================
 
-            commanded_current = i * MAX_CURRENT_STEP
+            commanded_current = (i * MAX_CURRENT_STEP) + MIN_CURRENT
 
             if commanded_current > MAX_CURRENT:
                 print()
@@ -394,7 +395,7 @@ def main():
                 motor_response = (
                     pi.servo_current(
                         motor_id,
-                        commanded_current
+                        -commanded_current
                     )
                 )
 
@@ -418,24 +419,6 @@ def main():
 
             data, address = latest
             packet = json.loads(data.decode("utf-8"))
-
-            # =================================================
-            # CHECK SENSOR AGE
-            # =================================================
-
-            sensor_age = (
-                time.monotonic()
-                -
-                last_sensor_time
-            )
-
-            if sensor_age > SENSOR_TIMEOUT:
-
-                if not args.dry_run:
-                    zero_motor(pi)
-
-                continue
-
 
             # =================================================
             # EXTRACT QUATERNION
