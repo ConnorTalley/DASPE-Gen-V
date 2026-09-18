@@ -117,7 +117,7 @@ SENSOR_TIMEOUT = 0.25
 #       180 degrees     2 A
 
 CURRENT_PROFILE = [
-    (0.0, 0.0),
+    (0.0, 0.5),
     (90.0, MAX_CURRENT),
     (180.0, 0.5 * MAX_CURRENT),
 ]
@@ -528,7 +528,7 @@ def main():
             
             d_elevation = (prev_elevation - elevation)
             
-            if d_elevation >= 0.05:
+            if d_elevation >= 0.5:
                 dir = 0
             else:
                 dir = 1
