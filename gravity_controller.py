@@ -528,7 +528,7 @@ def main():
             
             d_elevation = (prev_elevation - elevation)
             
-            if d_elevation >= 0.5:
+            if d_elevation >= 0.05:
                 dir = 0
             else:
                 dir = 1
