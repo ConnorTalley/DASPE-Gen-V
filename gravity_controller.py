@@ -89,7 +89,7 @@ PI_PORT = 8008
 MOTOR_ID = 3
 
 # Maximum commanded current
-MAX_CURRENT = 1
+MAX_CURRENT = 2
 
 # Sensor receiver
 UDP_PORT = 5005
@@ -117,7 +117,7 @@ SENSOR_TIMEOUT = 0.25
 #       180 degrees     2 A
 
 CURRENT_PROFILE = [
-    (0.0, 0.5),
+    (0.0, 0.3),
     (90.0, MAX_CURRENT),
     (180.0, 0.5 * MAX_CURRENT),
 ]
@@ -233,7 +233,8 @@ def display_data(
     commanded_current,
     quaternion,
     pressure,
-    motor_response
+    motor_response,
+    d_elevation
 ):
 
     print("\033[2J\033[H", end="")
@@ -249,6 +250,10 @@ def display_data(
 
     print(
         f"Elevation:          {elevation:8.2f}°"
+    )
+    
+    print(
+        f"Delta Elevation:          {d_elevation:8.2f}°"
     )
 
     print(
@@ -528,10 +533,10 @@ def main():
             
             d_elevation = (prev_elevation - elevation)
             
-            if d_elevation >= 0.05:
-                dir = 0
+            if d_elevation >= 0.1:
+                dir = -5
             else:
-                dir = 1
+                dir = -1
             
 
 
@@ -542,7 +547,7 @@ def main():
             commanded_current = (
                 (get_current_from_elevation(
                     elevation
-                ) * dir)
+                ) + (dir * d_elevation))
             )
 
 
@@ -575,7 +580,8 @@ def main():
                 commanded_current,
                 quaternion,
                 pressure,
-                motor_response
+                motor_response,
+                d_elevation
             )
 
 
