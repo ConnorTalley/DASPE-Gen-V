@@ -92,6 +92,9 @@ MOTOR_ID = 3
 # Maximum commanded current
 MAX_CURRENT = 0.01
 
+# Pressure channels from the Jetson (sensor 1, 2, and 3).
+EXPECTED_PRESSURE_CHANNELS = ("ch0", "ch1", "ch2")
+
 # Sensor receiver
 UDP_PORT = 5005
 
@@ -171,6 +174,10 @@ def create_data_record(
     quaternion,
     pressure
 ):
+
+    missing = [channel for channel in EXPECTED_PRESSURE_CHANNELS if channel not in pressure]
+    if missing:
+        raise ValueError("Missing pressure channels: " + ", ".join(missing))
 
     record = {
         "timestamp": timestamp,
@@ -323,7 +330,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=
-        "BNO08X elevation-based CubeMars gravity controller"
+        "Collect IMU elevation and three Jetson pressure channels"
     )
 
     parser.add_argument(
@@ -488,12 +495,13 @@ def main():
                 start_time
             )
 
-            record = create_data_record(
-                timestamp,
-                elevation,
-                quaternion,
-                pressure
-            )
+            try:
+                record = create_data_record(
+                    timestamp, elevation, quaternion, pressure
+                )
+            except (KeyError, ValueError, TypeError) as error:
+                print(f"[WARNING] Skipping incomplete sensor packet: {error}")
+                continue
 
             sensor_data.append(
                 record
